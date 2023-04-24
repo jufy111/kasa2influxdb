@@ -1,3 +1,5 @@
+Code Pulls data from TP-link smart plugs KP115 and pushes data to an influxdb (2.0+) instance
+
 ## Required Dependices  
 pip install influxdb  
 pip install influxdb_client  
