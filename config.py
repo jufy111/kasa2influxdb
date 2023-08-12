@@ -11,7 +11,7 @@ sensor_data = [
 # InfluxDB Configuration
 influxdb_config = {
     'token': "yourtokenhere",
-    'org': "tldm",
+    'org': "yourorg",
     'bucket': "bucketnamehere",
     'dburl': "http://10.10.10.10:8086"  #IP and port of you influxdb instance
 }
