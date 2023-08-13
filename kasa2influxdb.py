@@ -29,18 +29,14 @@ client = InfluxDBClient(url=dburl, token=token)
 logging.basicConfig(filename='error_log.txt', level=logging.ERROR, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
-# Main loop
+#Main loop
 def main():
     global querymsg
     querymsg = getquery('{"emeter":{"get_realtime":{}}}')
-    
+
     while True:
         try:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
-            sensor_data_list = []
-            all_data_points = []
-            raw_data = []
-
             for sensor in sensor_data:
                 raw_data = read_sensor(sensor)
                 sensor_data_list.append((sensor['name'], raw_data))
@@ -50,7 +46,7 @@ def main():
 
             # Print the timestamp and sensor data after writing to the database
             print(f"Timestamp: {timestamp}")
-            print('-' * 30)
+            print('-' * 40)
             for sensor_name, data in sensor_data_list:
                 if data is not None:
                     power_value = f"{data['power']} W"
@@ -60,16 +56,18 @@ def main():
 
             # Add a blank line after each interval
             print()
-        
+            sensor_data_list = []
+            all_data_points = []
+            raw_data = []
         except Exception as e:
             logging.error(f"An error occurred: {e}")
-
         # Clear printout memory and wait for sample time before the next iteration
         sys.stdout.flush()
         time.sleep(sample_time - time.monotonic() % sample_time)
+        return
 
 
-                
+         
 #Generates query for to send to devices - credit https://github.com/softScheck/tplink-smartplug
 def getquery(string):
     from struct import pack
@@ -92,7 +90,7 @@ def read_sensor(sensor):
 
 
 
-#Open socket with tp link deivce and gets raw data
+#Open socket with tp link deivce and gets data
 def poll_sensor(ip, port, querymsg, device_name):
     try:
         with socket.create_connection((ip, port), timeout=timeout_time) as sock_tcp:
@@ -131,6 +129,7 @@ def decrypt_json(data):
                }
     except:
         raise TypeError("Could not decrypt returned data.")
+        return None
 
 
 
@@ -157,9 +156,10 @@ def write_database(client, all_data_points):
     try:
         write_api = client.write_api(write_options=WriteOptions(batch_size=1000, flush_interval=5000))
         write_api.write(bucket=bucket, org=org, record=all_data_points)
+        return None
     except Exception as e:
         logging.error(f"Error writing data to InfluxDB: {e}")
-
+        return None
 
 
 #Initilize code + exeption handling
