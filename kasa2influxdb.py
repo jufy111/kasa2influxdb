@@ -23,7 +23,10 @@ port = other_config['port']
 sample_time = other_config['sample_time']
 timeout_time = other_config['timeout_time']
 
+
+#write to DB options
 client = InfluxDBClient(url=dburl, token=token)
+write_api = client.write_api(write_options=WriteOptions(batch_size=100, flush_interval=5000))
 
 # Configure logging
 logging.basicConfig(filename='error_log.txt', level=logging.ERROR, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -36,13 +39,17 @@ def main():
 
     while True:
         try:
+            sensor_data_list = []
+            all_data_points = []
+            
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
             for sensor in sensor_data:
+                raw_data = []
                 raw_data = read_sensor(sensor)
                 sensor_data_list.append((sensor['name'], raw_data))
 
             all_data_points = format_influx(sensor_data_list)
-            write_database(client, all_data_points)
+            write_database(client, all_data_points,write_api)
 
             # Print the timestamp and sensor data after writing to the database
             print(f"Timestamp: {timestamp}")
@@ -56,11 +63,9 @@ def main():
 
             # Add a blank line after each interval
             print()
-            sensor_data_list = []
-            all_data_points = []
-            raw_data = []
         except Exception as e:
             logging.error(f"An error occurred: {e}")
+            
         # Clear printout memory and wait for sample time before the next iteration
         sys.stdout.flush()
         time.sleep(sample_time - time.monotonic() % sample_time)
@@ -85,7 +90,7 @@ def getquery(string):
 def read_sensor(sensor):
     data = poll_sensor(sensor['ip'], port, querymsg, sensor['name'])
     if data is None:
-        return None
+        return
     return decrypt_json(data)
 
 
@@ -129,7 +134,7 @@ def decrypt_json(data):
                }
     except:
         raise TypeError("Could not decrypt returned data.")
-        return None
+
 
 
 
@@ -152,16 +157,14 @@ def format_influx(sensor_data_list):
 
 
 #Writes data to influxDB (2.0+)
-def write_database(client, all_data_points):
-    try:
-        write_api = client.write_api(write_options=WriteOptions(batch_size=1000, flush_interval=5000))
+def write_database(client, all_data_points, write_api):
+    try:        
         write_api.write(bucket=bucket, org=org, record=all_data_points)
-        return None
+        return
     except Exception as e:
         logging.error(f"Error writing data to InfluxDB: {e}")
-        return None
-
-
+        return
+    return
 #Initilize code + exeption handling
 if __name__ == "__main__":
     while True:
@@ -174,4 +177,4 @@ if __name__ == "__main__":
             logging.error(f"An error occurred: {e}")
             time.sleep(sample_time)  # Add a sleep to prevent constant looping in case of errors
 
-
+        
