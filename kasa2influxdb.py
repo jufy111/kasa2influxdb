@@ -6,6 +6,8 @@ from influxdb import InfluxDBClient
 from influxdb_client import InfluxDBClient, Point, WritePrecision
 from influxdb_client.client.write_api import WriteOptions, SYNCHRONOUS
 import logging
+import sys
+
 
 
 # Import the entire configuration dictionary from config.py
@@ -24,28 +26,27 @@ timeout_time = other_config['timeout_time']
 client = InfluxDBClient(url=dburl, token=token)
 
 # Configure logging
-logging.basicConfig(filename='error_log.txt', level=logging.ERROR,
-                    format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(filename='error_log.txt', level=logging.ERROR, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
-# Create an empty list to accumulate data points for all sensors
-all_data_points = []
-
+# Main loop
 def main():
     global querymsg
     querymsg = getquery('{"emeter":{"get_realtime":{}}}')
     
     while True:
         try:
-            sensor_data_list = []
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
+            sensor_data_list = []
+            all_data_points = []
+            raw_data = []
 
             for sensor in sensor_data:
-                data = read_sensor(sensor)
-                sensor_data_list.append((sensor['name'], data))
+                raw_data = read_sensor(sensor)
+                sensor_data_list.append((sensor['name'], raw_data))
 
-            # Call the modified write_database function to write all accumulated data
-            write_database(client, sensor_data_list)
+            all_data_points = format_influx(sensor_data_list)
+            write_database(client, all_data_points)
 
             # Print the timestamp and sensor data after writing to the database
             print(f"Timestamp: {timestamp}")
@@ -59,16 +60,17 @@ def main():
 
             # Add a blank line after each interval
             print()
-
+        
         except Exception as e:
             logging.error(f"An error occurred: {e}")
 
-        # Wait for sample time before the next iteration
+        # Clear printout memory and wait for sample time before the next iteration
+        sys.stdout.flush()
         time.sleep(sample_time - time.monotonic() % sample_time)
 
 
                 
-#generates query for to send to devices
+#Generates query for to send to devices - credit https://github.com/softScheck/tplink-smartplug
 def getquery(string):
     from struct import pack
     key = 171
@@ -79,15 +81,18 @@ def getquery(string):
         result += bytes([a])
     return result
 
-#sends query to devices
+
+
+#Sends query to devices
 def read_sensor(sensor):
     data = poll_sensor(sensor['ip'], port, querymsg, sensor['name'])
     if data is None:
         return None
-    return decrypt_power(data)
+    return decrypt_json(data)
 
 
 
+#Open socket with tp link deivce and gets raw data
 def poll_sensor(ip, port, querymsg, device_name):
     try:
         with socket.create_connection((ip, port), timeout=timeout_time) as sock_tcp:
@@ -101,11 +106,8 @@ def poll_sensor(ip, port, querymsg, device_name):
 
 
 
+#Decrypts the tplink data- credit https://github.com/softScheck/tplink-smartplug
 def decrypt(string):
-    """
-    Decrypt the TP-Link Smart Home Protocoll: XOR Autokey Cipher with starting key = 171
-    This follows: https://github.com/softScheck/tplink-smartplug
-    """
     key = 171
     result = ""
     for i in string:
@@ -116,7 +118,8 @@ def decrypt(string):
 
 
 
-def decrypt_power(data):
+#Extracts the relevent json infomation
+def decrypt_json(data):
     import json
     try:
         decrypted = decrypt(data[4:])
@@ -129,23 +132,28 @@ def decrypt_power(data):
     except:
         raise TypeError("Could not decrypt returned data.")
 
-      
 
-def write_database(client, sensor_data_list):
+
+#Formats data so it can be pushed to the influxDB intance
+def format_influx(sensor_data_list):
     all_data_points = []
-
     for sensor, data in sensor_data_list:
         if data is None:
             continue
 
         data_points = [
-            Point.measurement(sensor).tag('Measurement', 'Power').field('Reading', data['power']).time(datetime.utcnow(), WritePrecision.NS),
-            Point.measurement(sensor).tag('Measurement', 'Current').field('Reading', data['current']).time(datetime.utcnow(), WritePrecision.NS),
-            Point.measurement(sensor).tag('Measurement', 'Voltage').field('Reading', data['voltage']).time(datetime.utcnow(), WritePrecision.NS),
-            Point.measurement(sensor).tag('Measurement', 'Total_Energy').field('Reading', data['energy_total']).time(datetime.utcnow(), WritePrecision.NS)
+            Point.measurement(sensor).field('Power', data['power']).time(datetime.utcnow(), WritePrecision.NS),
+            Point.measurement(sensor).field('Current', data['current']).time(datetime.utcnow(), WritePrecision.NS),
+            Point.measurement(sensor).field('Voltage', data['voltage']).time(datetime.utcnow(), WritePrecision.NS),
+            Point.measurement(sensor).field('Total_Energy', data['energy_total']).time(datetime.utcnow(), WritePrecision.NS)
         ]
         all_data_points.extend(data_points)
+    return(all_data_points)
+      
 
+
+#Writes data to influxDB (2.0+)
+def write_database(client, all_data_points):
     try:
         write_api = client.write_api(write_options=WriteOptions(batch_size=1000, flush_interval=5000))
         write_api.write(bucket=bucket, org=org, record=all_data_points)
@@ -154,7 +162,7 @@ def write_database(client, sensor_data_list):
 
 
 
-#initilize code + so,e exeption handling
+#Initilize code + exeption handling
 if __name__ == "__main__":
     while True:
         try:
@@ -165,3 +173,5 @@ if __name__ == "__main__":
         except Exception as e:
             logging.error(f"An error occurred: {e}")
             time.sleep(sample_time)  # Add a sleep to prevent constant looping in case of errors
+
+
